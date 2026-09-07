@@ -11,7 +11,7 @@
 # Pure maths, no Lux/HDF5 — core Molly. Internal (unexported).
 
 # flat index of (channel c, component m) within entry k of channel-major irreps
-@inline _idx(irs::Irreps, k::Int, c::Int, m::Int) = irs.offsets[k] + (c - 1) * (2 * irs.entries[k].ir.l + 1) + m
+@inline tp_flat_index(irs::Irreps, k::Int, c::Int, m::Int) = irs.offsets[k] + (c - 1) * (2 * irs.entries[k].ir.l + 1) + m
 
 """
     tensor_product(paths, cg, x, y, w) -> z
@@ -33,8 +33,11 @@ function tensor_product(paths::TensorProductPaths, cg::SparseCG{T},
             wc = w[woff + c]
             wc == 0 && continue
             @inbounds for t in rng
-                m1 = Int(cg.m1[t]); m2 = Int(cg.m2[t]); m3 = Int(cg.m3[t]); v = cg.val[t]
-                z[_idx(out, k3, c, m3)] += wc * v * x[_idx(in1, k1, c, m1)] * y[_idx(in2, k2, 1, m2)]
+                m1 = Int(cg.m1[t])
+                m2 = Int(cg.m2[t])
+                m3 = Int(cg.m3[t])
+                v = cg.val[t]
+                z[tp_flat_index(out, k3, c, m3)] += wc * v * x[tp_flat_index(in1, k1, c, m1)] * y[tp_flat_index(in2, k2, 1, m2)]
             end
         end
     end
@@ -63,12 +66,15 @@ function tensor_product_vjp(paths::TensorProductPaths, cg::SparseCG{T},
             wc = w[woff + c]
             acc_w = zero(T)
             @inbounds for t in rng
-                m1 = Int(cg.m1[t]); m2 = Int(cg.m2[t]); m3 = Int(cg.m3[t]); v = cg.val[t]
-                xi = x[_idx(in1, k1, c, m1)]
-                yi = y[_idx(in2, k2, 1, m2)]
-                gi = ḡ[_idx(out, k3, c, m3)]
-                x̄[_idx(in1, k1, c, m1)] += wc * v * yi * gi
-                ȳ[_idx(in2, k2, 1, m2)] += wc * v * xi * gi
+                m1 = Int(cg.m1[t])
+                m2 = Int(cg.m2[t])
+                m3 = Int(cg.m3[t])
+                v = cg.val[t]
+                xi = x[tp_flat_index(in1, k1, c, m1)]
+                yi = y[tp_flat_index(in2, k2, 1, m2)]
+                gi = ḡ[tp_flat_index(out, k3, c, m3)]
+                x̄[tp_flat_index(in1, k1, c, m1)] += wc * v * yi * gi
+                ȳ[tp_flat_index(in2, k2, 1, m2)] += wc * v * xi * gi
                 acc_w += v * xi * yi * gi
             end
             w̄[woff + c] += acc_w

@@ -17,7 +17,7 @@
 
 # Component normalization multiplies the orthonormal complex SH by √(4π), giving Σ_m |Y|² = 2l+1
 # and making U_l unitary. Written for a unit vector (x, y, z) with the Condon-Shortley phase.
-function _complex_sph_harm(l::Int, x::Float64, y::Float64, z::Float64)
+function complex_sph_harm(l::Int, x::Float64, y::Float64, z::Float64)
     if l == 0
         return ComplexF64[1.0]
     elseif l == 1
@@ -43,7 +43,7 @@ end
 
 # The matching real SH (component-normalized), evaluated at a unit vector — mirrors
 # spherical_harmonics.jl but in plain Float64 for the setup-time U_l fit.
-function _real_sph_harm(l::Int, x::Float64, y::Float64, z::Float64)
+function real_sph_harm_f64(l::Int, x::Float64, y::Float64, z::Float64)
     if l == 0
         return [1.0]
     elseif l == 1
@@ -58,7 +58,7 @@ end
 
 # Unitary change of basis U_l with real Y = U_l · complex Y, recovered by least squares over a
 # set of sample directions (exact in Float64 since the two bases are related by a fixed unitary).
-function _real_transform(l::Int)
+function real_sh_transform(l::Int)
     d = 2l + 1
     # Deterministic, well-spread sample directions (≥ d of them).
     dirs = NTuple{3,Float64}[]
@@ -74,8 +74,8 @@ function _real_transform(l::Int)
     R = Matrix{ComplexF64}(undef, d, K)  # real SH samples
     C = Matrix{ComplexF64}(undef, d, K)  # complex SH samples
     for (k, (x, y, z)) in enumerate(dirs)
-        R[:, k] = _real_sph_harm(l, x, y, z)
-        C[:, k] = _complex_sph_harm(l, x, y, z)
+        R[:, k] = real_sph_harm_f64(l, x, y, z)
+        C[:, k] = complex_sph_harm(l, x, y, z)
     end
     # real = U * complex  ⇒  U = R * pinv(C)
     U = R * pinv(C)
@@ -84,20 +84,20 @@ end
 
 # ---- complex Clebsch-Gordan closed form ----------------------------------------------------------
 
-_lfact(n::Int) = n < 0 ? Inf : Float64(factorial(big(n)))
+big_factorial(n::Int) = n < 0 ? Inf : Float64(factorial(big(n)))
 
 # <j1 m1 j2 m2 | j3 m3>, standard Condon-Shortley convention.
-function _cg_complex(j1, m1, j2, m2, j3, m3)
+function cg_complex(j1, m1, j2, m2, j3, m3)
     (m1 + m2 == m3) || return 0.0
     (abs(j1 - j2) <= j3 <= j1 + j2) || return 0.0
     (abs(m1) <= j1 && abs(m2) <= j2 && abs(m3) <= j3) || return 0.0
 
     pref = sqrt((2j3 + 1) *
-                _lfact(j3 + j1 - j2) * _lfact(j3 - j1 + j2) * _lfact(j1 + j2 - j3) /
-                _lfact(j1 + j2 + j3 + 1))
-    pref *= sqrt(_lfact(j3 + m3) * _lfact(j3 - m3) *
-                 _lfact(j1 - m1) * _lfact(j1 + m1) *
-                 _lfact(j2 - m2) * _lfact(j2 + m2))
+                big_factorial(j3 + j1 - j2) * big_factorial(j3 - j1 + j2) * big_factorial(j1 + j2 - j3) /
+                big_factorial(j1 + j2 + j3 + 1))
+    pref *= sqrt(big_factorial(j3 + m3) * big_factorial(j3 - m3) *
+                 big_factorial(j1 - m1) * big_factorial(j1 + m1) *
+                 big_factorial(j2 - m2) * big_factorial(j2 + m2))
     s = 0.0
     for k in 0:(j1 + j2 + j3)
         a1 = j1 + j2 - j3 - k
@@ -106,7 +106,7 @@ function _cg_complex(j1, m1, j2, m2, j3, m3)
         a4 = j3 - j2 + m1 + k
         a5 = j3 - j1 - m2 + k
         (k >= 0 && a1 >= 0 && a2 >= 0 && a3 >= 0 && a4 >= 0 && a5 >= 0) || continue
-        s += (-1)^k / (_lfact(k) * _lfact(a1) * _lfact(a2) * _lfact(a3) * _lfact(a4) * _lfact(a5))
+        s += (-1)^k / (big_factorial(k) * big_factorial(a1) * big_factorial(a2) * big_factorial(a3) * big_factorial(a4) * big_factorial(a5))
     end
     return pref * s
 end
@@ -130,13 +130,13 @@ struct SparseCG{T}
 end
 
 # Real CG for one coupling, as a dense (d1, d2, d3) array (component indices 1-based).
-function _real_cg_dense(l1::Int, l2::Int, l3::Int)
+function real_cg_dense(l1::Int, l2::Int, l3::Int)
     d1, d2, d3 = 2l1 + 1, 2l2 + 1, 2l3 + 1
-    U1, U2, U3 = _real_transform(l1), _real_transform(l2), _real_transform(l3)
+    U1, U2, U3 = real_sh_transform(l1), real_sh_transform(l2), real_sh_transform(l3)
     # complex CG tensor in component-index form
     Cc = zeros(ComplexF64, d1, d2, d3)
     for (i1, mm1) in enumerate(-l1:l1), (i2, mm2) in enumerate(-l2:l2), (i3, mm3) in enumerate(-l3:l3)
-        Cc[i1, i2, i3] = _cg_complex(l1, mm1, l2, mm2, l3, mm3)
+        Cc[i1, i2, i3] = cg_complex(l1, mm1, l2, mm2, l3, mm3)
     end
     Cr = zeros(ComplexF64, d1, d2, d3)
     for M1 in 1:d1, M2 in 1:d2, M3 in 1:d3
@@ -183,15 +183,18 @@ function build_sparse_cg(paths::TensorProductPaths; T::Type=Float32, tol::Float6
     for p in eachindex(paths.l)
         l1, l2, l3 = paths.l[p]
         dense = get!(cache, (l1, l2, l3)) do
-            _real_cg_dense(l1, l2, l3)
+            real_cg_dense(l1, l2, l3)
         end
-        # _real_cg_dense returns Clebsch-Gordan-normalized coefficients (= √(2l3+1)·wigner_3j).
+        # real_cg_dense returns Clebsch-Gordan-normalized coefficients (= √(2l3+1)·wigner_3j).
         scale = normalization === :wigner3j ? 1.0 / sqrt(2l3 + 1) : 1.0
         d1, d2, d3 = size(dense)
         for i1 in 1:d1, i2 in 1:d2, i3 in 1:d3
             v = dense[i1, i2, i3] * scale
             abs(v) > tol || continue
-            push!(m1s, i1); push!(m2s, i2); push!(m3s, i3); push!(vals, T(v))
+            push!(m1s, i1)
+            push!(m2s, i2)
+            push!(m3s, i3)
+            push!(vals, T(v))
         end
         push!(poff, length(vals))
     end

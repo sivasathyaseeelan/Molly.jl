@@ -578,7 +578,7 @@ Energy and analytic forces (`F = -∂E/∂r`, composed from the primitive vector
 Weights are loaded from an HDF5 file exported by `test/allegro_reference.py`:
 ```julia
 using Molly
-using Lux, HDF5 # required to construct and run an AllegroPotential
+using HDF5 # required to load an AllegroPotential from file
 
 pot = AllegroPotential("allegro_model.h5")
 

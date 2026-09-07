@@ -1,7 +1,7 @@
 # Allegro-style equivariant energy model (CPU reference forward), built on the equivariant
 # primitives. Strictly local: the energy is a sum over directed edges within a cutoff. This holds
-# the pure maths (no Lux/HDF5) so it can be tested with a bare `using Molly`; the HDF5 weight
-# loading and AtomsCalculators wiring live in the extension.
+# the pure maths (no HDF5) so it can be tested with a bare `using Molly`; the HDF5 weight loading
+# lives in the extension.
 #
 # Per directed edge i<-j (i = central atom), with r = r_j - r_i, d = |r|, r̂ = r/d:
 #   Y = real_sph_harm(2, r̂)              (9,)          u = poly_envelope(d)
@@ -12,7 +12,7 @@
 #   for each layer:
 #       w = x·tp_W' + tp_b                 tensor-product path weights
 #       P = TP_uvu(V, Y; w)                (9C,)
-#       x = x + silu([x; scalars0e(P)]·x_W' + x_b)
+#       x = x + silu([x; scalars_0e(P)]·x_W' + x_b)
 #       V = eqlin(P)
 #   E_edge = out_W·x + out_b               (scalar)
 # The activation is SiLU; the tensor product uses e3nn-normalized (wigner_3j) coefficients.
@@ -25,19 +25,27 @@ coefficients, and the per-layer weights. Construct with [`build_allegro_model`](
 forward is [`allegro_edge_energy`](@ref) / [`allegro_total_energy`](@ref).
 """
 struct AllegroModel{T}
-    C::Int; H::Int; nb::Int; S::Int; L::Int; env_p::Int
+    C::Int
+    H::Int
+    nb::Int
+    S::Int
+    L::Int
+    env_p::Int
     r_c::T
     feat::Irreps
     sh::Irreps
     paths::TensorProductPaths
     cg::SparseCG{T}
-    emb_W1::Matrix{T}; emb_b1::Vector{T}
-    emb_W2::Matrix{T}; emb_b2::Vector{T}
+    emb_W1::Matrix{T}
+    emb_b1::Vector{T}
+    emb_W2::Matrix{T}
+    emb_b2::Vector{T}
     init_w::Matrix{T}   # (C, 3): per-l channel scale (columns are l = 0,1,2)
     init_b0::Vector{T}  # (C,) scalar bias applied to the 0e block at init
     layers::Vector{NamedTuple{(:tp_W, :tp_b, :x_W, :x_b, :lin),
                               Tuple{Matrix{T}, Vector{T}, Matrix{T}, Vector{T}, EquivariantLinear{T}}}}
-    out_W::Matrix{T}; out_b::Vector{T}
+    out_W::Matrix{T}
+    out_b::Vector{T}
 end
 
 """
@@ -66,16 +74,26 @@ function build_allegro_model(; C::Int, H::Int, nb::Int, S::Int, L::Int, env_p::I
                            layers, T.(weights.out_W), T.(weights.out_b))
 end
 
-@inline _dense(W, b, x) = W * x .+ b
+@inline dense_forward(W, b, x) = W * x .+ b
 
 # derivative of SiLU: d/dx[x·σ(x)] = σ(x)·(1 + x·(1−σ(x)))
-@inline function _silu_grad(x::T) where T
+@inline function silu_grad(x::T) where T
     s = one(T) / (one(T) + exp(-x))
     return s * (one(T) + x * (one(T) - s))
 end
 
 # scalar (0e) block of a feature vector: the first C entries (entry k=1 is the 0e block, mul C)
-@inline _scalars0e(feat::Irreps, P, C) = @view P[1:C]
+@inline scalars_0e(feat::Irreps, P, C) = @view P[1:C]
+
+# Fill the two-body scalar input [radial embedding; onehot(Zi); onehot(Zj)] in place.
+function fill_two_body_input!(s_in, R, nb, S, Zi, Zj)
+    @inbounds for i in 1:nb
+        s_in[i] = R[i]
+    end
+    s_in[nb + Zi] = one(eltype(s_in))
+    s_in[nb + S + Zj] = one(eltype(s_in))
+    return s_in
+end
 
 """
     allegro_edge_energy(m::AllegroModel, d, rhat, Zi, Zj) -> T
@@ -88,17 +106,14 @@ function allegro_edge_energy(m::AllegroModel{T}, d::T, rhat::SVector{3,T}, Zi::I
     Y = real_sph_harm(2, rhat)                       # SVector length 9
     u = poly_envelope(d, m.r_c, m.env_p)
     R = bessel_basis(d, m.r_c, Val(m.nb)) .* u        # radial embedding
-    # two-body scalar input [R; onehot(Zi); onehot(Zj)]
     s_in = zeros(T, m.nb + 2 * m.S)
-    @inbounds for i in 1:m.nb; s_in[i] = R[i]; end
-    s_in[m.nb + Zi] = one(T)
-    s_in[m.nb + m.S + Zj] = one(T)
-    x = _dense(m.emb_W2, m.emb_b2, silu.(_dense(m.emb_W1, m.emb_b1, s_in)))  # (H,)
+    fill_two_body_input!(s_in, R, m.nb, m.S, Zi, Zj)
+    x = dense_forward(m.emb_W2, m.emb_b2, silu.(dense_forward(m.emb_W1, m.emb_b1, s_in)))  # (H,)
 
     # initial equivariant latent V = init_lin(Y)·u, channel-major
     V = zeros(T, m.feat.dim)
     @inbounds for k in 1:3
-        d_k = 2 * (k - 1) + 1                          # 1,3,5
+        d_k = 2 * (k - 1) + 1                          # 1, 3, 5
         yoff = m.sh.offsets[k]
         for c in 1:m.C
             wl = m.init_w[c, k]
@@ -114,10 +129,10 @@ function allegro_edge_energy(m::AllegroModel{T}, d::T, rhat::SVector{3,T}, Zi::I
 
     Yv = collect(Y)  # tensor_product expects an AbstractVector for in2
     for lw in m.layers
-        w = _dense(lw.tp_W, lw.tp_b, x)                 # (n_weights,)
-        P = tensor_product(m.paths, m.cg, V, Yv, w)     # (9C,)
-        scal = _scalars0e(m.feat, P, m.C)
-        x = x .+ silu.(_dense(lw.x_W, lw.x_b, vcat(x, scal)))
+        w = dense_forward(lw.tp_W, lw.tp_b, x)                 # (n_weights,)
+        P = tensor_product(m.paths, m.cg, V, Yv, w)            # (9C,)
+        scal = scalars_0e(m.feat, P, m.C)
+        x = x .+ silu.(dense_forward(lw.x_W, lw.x_b, vcat(x, scal)))
         V = eqlinear_forward(lw.lin, P)
     end
     return (m.out_W * x .+ m.out_b)[1]
@@ -142,31 +157,44 @@ function allegro_edge_energy_and_grad(m::AllegroModel{T}, d::T, rhat::SVector{3,
 
     # ---- forward, caching activations ----
     s_in = zeros(T, m.nb + 2 * m.S)
-    @inbounds for i in 1:m.nb; s_in[i] = R[i]; end
-    s_in[m.nb + Zi] = one(T); s_in[m.nb + m.S + Zj] = one(T)
-    a1 = _dense(m.emb_W1, m.emb_b1, s_in)
-    x0 = _dense(m.emb_W2, m.emb_b2, silu.(a1))
+    fill_two_body_input!(s_in, R, m.nb, m.S, Zi, Zj)
+    a1 = dense_forward(m.emb_W1, m.emb_b1, s_in)
+    x0 = dense_forward(m.emb_W2, m.emb_b2, silu.(a1))
 
     V0 = zeros(T, m.feat.dim)
     @inbounds for k in 1:3
-        dk = 2 * (k - 1) + 1; yoff = m.sh.offsets[k]
+        dk = 2 * (k - 1) + 1
+        yoff = m.sh.offsets[k]
         for c in 1:m.C
-            wl = m.init_w[c, k]; base = m.feat.offsets[k] + (c - 1) * dk
-            for mm in 1:dk; V0[base + mm] = wl * Y[yoff + mm] * u; end
+            wl = m.init_w[c, k]
+            base = m.feat.offsets[k] + (c - 1) * dk
+            for mm in 1:dk
+                V0[base + mm] = wl * Y[yoff + mm] * u
+            end
         end
     end
-    @inbounds for c in 1:m.C; V0[m.feat.offsets[1] + c] += m.init_b0[c] * u; end
+    @inbounds for c in 1:m.C
+        V0[m.feat.offsets[1] + c] += m.init_b0[c] * u
+    end
 
     L = length(m.layers)
-    x_ins = Vector{Vector{T}}(undef, L); V_ins = Vector{Vector{T}}(undef, L)
-    ws = Vector{Vector{T}}(undef, L); Ps = Vector{Vector{T}}(undef, L); axs = Vector{Vector{T}}(undef, L)
-    x = x0; V = V0
+    x_ins = Vector{Vector{T}}(undef, L)
+    V_ins = Vector{Vector{T}}(undef, L)
+    ws = Vector{Vector{T}}(undef, L)
+    Ps = Vector{Vector{T}}(undef, L)
+    axs = Vector{Vector{T}}(undef, L)
+    x = x0
+    V = V0
     for (li, lw) in enumerate(m.layers)
-        x_ins[li] = x; V_ins[li] = V
-        w = _dense(lw.tp_W, lw.tp_b, x); ws[li] = w
-        P = tensor_product(m.paths, m.cg, V, Yv, w); Ps[li] = P
+        x_ins[li] = x
+        V_ins[li] = V
+        w = dense_forward(lw.tp_W, lw.tp_b, x)
+        ws[li] = w
+        P = tensor_product(m.paths, m.cg, V, Yv, w)
+        Ps[li] = P
         scal = P[1:m.C]
-        ax = _dense(lw.x_W, lw.x_b, vcat(x, scal)); axs[li] = ax
+        ax = dense_forward(lw.x_W, lw.x_b, vcat(x, scal))
+        axs[li] = ax
         x = x .+ silu.(ax)
         V = eqlinear_forward(lw.lin, P)
     end
@@ -179,38 +207,47 @@ function allegro_edge_energy_and_grad(m::AllegroModel{T}, d::T, rhat::SVector{3,
     for li in L:-1:1
         lw = m.layers[li]
         gh = gx                                         # residual: x_out = x_in + silu(ax)
-        gax = gh .* _silu_grad.(axs[li])
+        gax = gh .* silu_grad.(axs[li])
         gcat = lw.x_W' * gax                            # ∂E/∂[x_in; scal]
         gx_in = copy(gx)                                # residual path
-        @inbounds for i in 1:m.H; gx_in[i] += gcat[i]; end
+        @inbounds for i in 1:m.H
+            gx_in[i] += gcat[i]
+        end
         gscal = @view gcat[(m.H + 1):(m.H + m.C)]
         gP = zeros(T, m.feat.dim)
-        @inbounds for c in 1:m.C; gP[c] += gscal[c]; end
+        @inbounds for c in 1:m.C
+            gP[c] += gscal[c]
+        end
         gP_lin, _, _ = eqlinear_vjp(lw.lin, Ps[li], gV)
         gP .+= gP_lin
         gVin, gYc, gw = tensor_product_vjp(m.paths, m.cg, V_ins[li], Yv, ws[li], gP)
         gY .+= gYc
         gx_in .+= lw.tp_W' * gw
-        gx = gx_in; gV = gVin
+        gx = gx_in
+        gV = gVin
     end
     # gx = ∂E/∂x0 ; gV = ∂E/∂V0
     gu = zero(T)
     @inbounds for k in 1:3
-        dk = 2 * (k - 1) + 1; yoff = m.sh.offsets[k]
+        dk = 2 * (k - 1) + 1
+        yoff = m.sh.offsets[k]
         for c in 1:m.C
-            wl = m.init_w[c, k]; base = m.feat.offsets[k] + (c - 1) * dk
+            wl = m.init_w[c, k]
+            base = m.feat.offsets[k] + (c - 1) * dk
             for mm in 1:dk
                 gY[yoff + mm] += gV[base + mm] * wl * u
                 gu += gV[base + mm] * wl * Y[yoff + mm]
             end
         end
     end
-    @inbounds for c in 1:m.C; gu += gV[m.feat.offsets[1] + c] * m.init_b0[c]; end
+    @inbounds for c in 1:m.C
+        gu += gV[m.feat.offsets[1] + c] * m.init_b0[c]
+    end
     # embedding backward → ∂E/∂R
     g_silu_a1 = m.emb_W2' * gx
-    ga1 = g_silu_a1 .* _silu_grad.(a1)
+    ga1 = g_silu_a1 .* silu_grad.(a1)
     gs_in = m.emb_W1' * ga1
-    # radial ∂E/∂d : R_n = B_n·u  ⇒ dR_n/dd = dB_n·u + B_n·du ; plus u's direct role in V init
+    # radial ∂E/∂d : R_n = B_n·u ⇒ dR_n/dd = dB_n·u + B_n·du ; plus u's direct role in V init
     gd = zero(T)
     @inbounds for n in 1:m.nb
         gd += gs_in[n] * (dB[n] * u + B[n] * du)
@@ -220,7 +257,9 @@ function allegro_edge_energy_and_grad(m::AllegroModel{T}, d::T, rhat::SVector{3,
     gr = MVector{3,T}(0, 0, 0)
     @inbounds for b in 1:3
         acc = zero(T)
-        for i in 1:length(Yv); acc += JY[i, b] * gY[i]; end
+        for i in 1:length(Yv)
+            acc += JY[i, b] * gY[i]
+        end
         gr[b] = acc + gd * rhat[b]
     end
     return E, SVector{3,T}(gr)
@@ -230,8 +269,7 @@ end
     allegro_forces(m, coords, species, boundary, r_c) -> Vector{SVector{3,T}}
 
 Analytic forces `F = -∂E/∂r` for all atoms, summing each directed edge's contribution: for edge
-`i ← j` with `g = ∂E_edge/∂r`, `F[i] += g` and `F[j] -= g`. Also returns nothing extra; use
-[`allegro_total_energy`](@ref) for the energy.
+`i ← j` with `g = ∂E_edge/∂r`, `F[i] += g` and `F[j] -= g`.
 """
 function allegro_forces(m::AllegroModel{T}, coords::AbstractVector{<:SVector{3}},
                         species::AbstractVector{<:Integer}, boundary, r_c::T) where T

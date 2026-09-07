@@ -28,13 +28,13 @@ const C2C = 0.5 * sqrt(15.0)  # l=2 m=±2
 # The homogeneous degree-l polynomials P_l^m(v) with Y_lm(r̂) = P_l^m(r̂). Written for a general
 # vector v = (x, y, z); on the unit sphere they give the component-normalized real SH.
 
-@inline function _P1(x::T, y::T, z::T) where T
+@inline function poly_l1(x::T, y::T, z::T) where T
     c = T(C1)
     return (c * x, c * y, c * z)                       # m = -1, 0, +1  ↔  x, y, z
 end
 
 # e3nn l=2 basis (component-normalized): [√15·xz, √15·xy, (√5/2)(2y²−x²−z²), √15·yz, (√15/2)(z²−x²)].
-@inline function _P2(x::T, y::T, z::T) where T
+@inline function poly_l2(x::T, y::T, z::T) where T
     ca, cb, cc = T(C2A), T(C2B), T(C2C)
     return (ca * x * z,                                # [0]  √15·xz
             ca * x * y,                                # [1]  √15·xy
@@ -58,11 +58,11 @@ within each block). `r` is an `SVector{3}`; only its direction matters. Supports
     if lmax == 0
         return SVector{1,T}(one(T))
     elseif lmax == 1
-        p1 = _P1(x, y, z)
+        p1 = poly_l1(x, y, z)
         return SVector{4,T}(one(T), p1[1], p1[2], p1[3])
     else
-        p1 = _P1(x, y, z)
-        p2 = _P2(x, y, z)
+        p1 = poly_l1(x, y, z)
+        p2 = poly_l2(x, y, z)
         return SVector{9,T}(one(T),
                             p1[1], p1[2], p1[3],
                             p2[1], p2[2], p2[3], p2[4], p2[5])
@@ -94,7 +94,7 @@ and `J::SMatrix{(lmax+1)^2, 3}`. Supports `lmax ≤ 2`.
     c1 = T(C1)
     # l=1: P = c1*(x,y,z) ⇒ ∇ = c1*I
     gP1 = (SVector{3,T}(c1, 0, 0), SVector{3,T}(0, c1, 0), SVector{3,T}(0, 0, c1))
-    p1 = _P1(x, y, z)
+    p1 = poly_l1(x, y, z)
 
     if lmax == 1
         Y = SVector{4,T}(one(T), p1[1], p1[2], p1[3])
@@ -114,7 +114,7 @@ and `J::SMatrix{(lmax+1)^2, 3}`. Supports `lmax ≤ 2`.
     # l=2
     ca, cb, cc = T(C2A), T(C2B), T(C2C)
     c5 = T(sqrt(5.0))  # = 2·cb, from d/d[.] of (√5/2)(2y²−x²−z²)
-    p2 = _P2(x, y, z)
+    p2 = poly_l2(x, y, z)
     # ∇P2 for each e3nn l=2 component (degree-1 polynomials in x,y,z):
     gP2 = (
         SVector{3,T}(ca * z, 0, ca * x),               # [0] √15·xz

@@ -165,7 +165,7 @@ _rand_vec(seed) = SVector{3,Float64}(sin(seed * 1.1) + 0.3, cos(seed * 2.3) - 0.
                    (1, 3, 1) => 0.316228, (2, 1, 2) => 0.316228, (2, 2, 3) => 0.365148,
                    (2, 3, 4) => 0.316228, (3, 1, 1) => 0.316228, (3, 2, 4) => 0.316228,
                    (3, 3, 3) => -0.182574, (3, 3, 5) => 0.316228)  # 1-based (i,j,k)
-        dense = Molly._real_cg_dense(1, 1, 2) ./ sqrt(5.0)  # CG → wigner_3j normalization
+        dense = Molly.real_cg_dense(1, 1, 2) ./ sqrt(5.0)  # CG → wigner_3j normalization
         for i in 1:3, j in 1:3, k in 1:5
             ref = get(w3j, (i, j, k), 0.0)
             @test isapprox(dense[i, j, k], ref; atol=1e-5)

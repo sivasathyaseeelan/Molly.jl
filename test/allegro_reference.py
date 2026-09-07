@@ -11,8 +11,16 @@ writes, into data/allegro_reference/:
   * allegro_model.json   — config, species symbols, and per-system reference energies + forces
     (from finite differences) for a couple of tiny molecules.
 
-The Julia side (test/allegro_potentials.jl) loads these, when present, and checks that the native
-implementation reproduces the reference energy (and, once implemented, forces).
+The Julia side (test/ml_potentials.jl) loads these, when present, and checks that the native
+implementation reproduces the reference energy and forces.
+
+Correctness of the equivariant parts: every O(3)-equivariant operation here comes from the
+authoritative e3nn library, not a hand-rolled reimplementation. Spherical harmonics use
+`o3.spherical_harmonics` and the tensor-product coefficients use `o3.wigner_3j`; the Julia
+primitives are pinned bit-for-bit to these in test/equivariant.jl. The rest of the model (the
+scalar MLPs, the two-body embedding and the read-out) is standard dense layers implemented in
+numpy. Validating against a *trained* mir-group/allegro checkpoint end-to-end (loading its weights
+and running a 6mrr trajectory) is the planned next step.
 
 Usage:
     pip install "e3nn>=0.5" torch numpy h5py

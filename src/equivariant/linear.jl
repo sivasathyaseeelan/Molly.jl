@@ -40,7 +40,7 @@ EquivariantLinear(irreps_in::Irreps, irreps_out::Irreps,
                   weights::Vector{Matrix{T}}, biases::Vector{Vector{T}}) where T =
     EquivariantLinear{T}(irreps_in, irreps_out, weights, biases)
 
-@inline _lin_idx(irs::Irreps, k::Int, c::Int, m::Int) =
+@inline lin_flat_index(irs::Irreps, k::Int, c::Int, m::Int) =
     irs.offsets[k] + (c - 1) * (2 * irs.entries[k].ir.l + 1) + m
 
 """
@@ -61,12 +61,12 @@ function eqlinear_forward(lin::EquivariantLinear{T}, x::AbstractVector{T}) where
             for co in 1:cout
                 acc = zero(T)
                 @inbounds for ci in 1:cin
-                    acc += W[co, ci] * x[_lin_idx(irs_i, k, ci, m)]
+                    acc += W[co, ci] * x[lin_flat_index(irs_i, k, ci, m)]
                 end
                 if is_scalar
                     acc += lin.biases[k][co]
                 end
-                y[_lin_idx(irs_o, k, co, m)] = acc
+                y[lin_flat_index(irs_o, k, co, m)] = acc
             end
         end
     end
@@ -91,13 +91,13 @@ function eqlinear_vjp(lin::EquivariantLinear{T}, x::AbstractVector{T}, ḡ::Abst
         is_scalar = irs_i.entries[k].ir.l == 0 && irs_i.entries[k].ir.p == 1
         for m in 1:d
             for co in 1:cout
-                g = ḡ[_lin_idx(irs_o, k, co, m)]
+                g = ḡ[lin_flat_index(irs_o, k, co, m)]
                 if is_scalar
                     b̄[k][co] += g
                 end
                 @inbounds for ci in 1:cin
-                    xi = x[_lin_idx(irs_i, k, ci, m)]
-                    x̄[_lin_idx(irs_i, k, ci, m)] += W[co, ci] * g
+                    xi = x[lin_flat_index(irs_i, k, ci, m)]
+                    x̄[lin_flat_index(irs_i, k, ci, m)] += W[co, ci] * g
                     W̄[k][co, ci] += g * xi
                 end
             end
