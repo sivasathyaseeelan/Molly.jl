@@ -4,6 +4,7 @@ export
     CoulombSoftCoreBeutler,
     CoulombSoftCoreGapsys,
     CoulombReactionField,
+    SetupCoulombReactionField,
     CoulombReactionFieldScaled,
     CoulombSoftCoreBeutlerReactionField,
     CoulombSoftCoreGapsysReactionField,
@@ -53,22 +54,10 @@ function Base.:+(c1::Coulomb, c2::Coulomb)
     )
 end
 
-function inject_interaction(inter::Coulomb, params_dic)
-    key_prefix = "inter_CO_"
-    return Coulomb(
-        inter.cutoff,
-        inter.use_neighbors,
-        dict_get(params_dic, key_prefix * "weight_14", inter.weight_special),
-        dict_get(params_dic, key_prefix * "coulomb_const", inter.coulomb_const),
-    )
-end
+parameter_prefix(::Coulomb) = "inter_CO_"
+parameter_fields(::Type{<:Coulomb}) =
+    ((:weight_special, "weight_14"), (:coulomb_const, "coulomb_const"))
 
-function extract_parameters!(params_dic, inter::Coulomb, ff)
-    key_prefix = "inter_CO_"
-    params_dic[key_prefix * "weight_14"] = inter.weight_special
-    params_dic[key_prefix * "coulomb_const"] = inter.coulomb_const
-    return params_dic
-end
 
 @inline function force(inter::Coulomb{C},
                        dr,
@@ -158,6 +147,11 @@ function Base.:+(c1::CoulombScaled, c2::CoulombScaled)
         c1.coulomb_const + c2.coulomb_const,
     )
 end
+
+parameter_prefix(::CoulombScaled) = "inter_CO_"
+parameter_fields(::Type{<:CoulombScaled}) =
+    ((:weight_special, "weight_14"), (:coulomb_const, "coulomb_const"))
+
 
 @inline function force(inter::CoulombScaled{C},
                        dr,
@@ -350,6 +344,11 @@ function Base.:+(c1::CoulombSoftCoreBeutler, c2::CoulombSoftCoreBeutler)
     )
 end
 
+parameter_prefix(::CoulombSoftCoreBeutler) = "inter_CO_"
+parameter_fields(::Type{<:CoulombSoftCoreBeutler}) =
+    ((:α, "α"), (:weight_special, "weight_14"), (:coulomb_const, "coulomb_const"))
+
+
 @inline function force(inter::CoulombSoftCoreBeutler,
                        dr,
                        atom_i,
@@ -524,7 +523,7 @@ end
 
 use_neighbors(inter::CoulombSoftCoreGapsys) = inter.use_neighbors
 
-required_atom_fields(::CoulombSoftCoreGapsys) = (:charge, :λ, :alch_role,
+required_atom_fields(inter::CoulombSoftCoreGapsys) = (:charge, :λ, :alch_role,
             mixing_atom_fields(inter.λ_mixing)...)
 
 function Base.zero(coul::CoulombSoftCoreGapsys{C, A, S, LM, SCH, W, T}) where {C, A, S, LM, SCH, W, T}
@@ -552,6 +551,12 @@ function Base.:+(c1::CoulombSoftCoreGapsys, c2::CoulombSoftCoreGapsys)
         c1.coulomb_const + c2.coulomb_const,
     )
 end
+
+parameter_prefix(::CoulombSoftCoreGapsys) = "inter_CO_"
+parameter_fields(::Type{<:CoulombSoftCoreGapsys}) =
+    ((:α, "α"), (:σQ, "σQ"), (:weight_special, "weight_14"),
+     (:coulomb_const, "coulomb_const"))
+
 
 @inline function force(inter::CoulombSoftCoreGapsys, 
                        dr,
@@ -705,6 +710,9 @@ c_\mathrm{rf} = \frac{1}{r_\mathrm{c}} \frac{3\varepsilon_\mathrm{rf}}{2\varepsi
 `solvent_dielectric` corresponds to ``\varepsilon_\mathrm{rf}``.
 Setting `solvent_dielectric=Inf` gives conducting boundary conditions
 (``k_\mathrm{rf} = 1/(2r_\mathrm{c}^3)``, ``c_\mathrm{rf} = 3/(2r_\mathrm{c})``).
+
+[`SetupCoulombReactionField`](@ref) provides reaction field parameters when setting up a
+system from a file.
 """
 @kwdef struct CoulombReactionField{D, S, W, T} <: PairwiseInteraction
     dist_cutoff::D
@@ -738,25 +746,11 @@ function Base.:+(c1::CoulombReactionField, c2::CoulombReactionField)
     )
 end
 
-function inject_interaction(inter::CoulombReactionField, params_dic)
-    key_prefix = "inter_CRF_"
-    return CoulombReactionField(
-        dict_get(params_dic, key_prefix * "dist_cutoff", inter.dist_cutoff),
-        dict_get(params_dic, key_prefix * "solvent_dielectric", inter.solvent_dielectric),
-        inter.use_neighbors,
-        dict_get(params_dic, key_prefix * "weight_14", inter.weight_special),
-        dict_get(params_dic, key_prefix * "coulomb_const", inter.coulomb_const),
-    )
-end
+parameter_prefix(::CoulombReactionField) = "inter_CO_"
+parameter_fields(::Type{<:CoulombReactionField}) =
+    ((:dist_cutoff, "dist_cutoff"), (:solvent_dielectric, "solvent_dielectric"),
+     (:weight_special, "weight_14"), (:coulomb_const, "coulomb_const"))
 
-function extract_parameters!(params_dic, inter::CoulombReactionField, ff)
-    key_prefix = "inter_CRF_"
-    params_dic[key_prefix * "dist_cutoff"] = inter.dist_cutoff
-    params_dic[key_prefix * "solvent_dielectric"] = inter.solvent_dielectric
-    params_dic[key_prefix * "weight_14"] = inter.weight_special
-    params_dic[key_prefix * "coulomb_const"] = inter.coulomb_const
-    return params_dic
-end
 
 @inline function force(inter::CoulombReactionField,
                        dr,
@@ -826,6 +820,31 @@ end
     end
 end
 
+"""
+    SetupCoulombReactionField(; solvent_dielectric, coulomb_const)
+
+Set up the Coulomb electrostatic interaction modified using the reaction field approximation
+between two atoms.
+
+Passed to the [`System`](@ref) constructor from files, where it creates a
+[`CoulombReactionField`](@ref) pairwise interaction.
+"""
+@kwdef struct SetupCoulombReactionField{T, C}
+    solvent_dielectric::T = crf_solvent_dielectric
+    coulomb_const::C = coulomb_const
+end
+
+function setup_coulomb_pairwise(scrf::SetupCoulombReactionField, dist_cutoff,
+                                weight_special, use_neighbors, units, T)
+    return CoulombReactionField(
+        dist_cutoff=T(dist_cutoff),
+        solvent_dielectric=T(scrf.solvent_dielectric),
+        use_neighbors=use_neighbors,
+        weight_special=weight_special,
+        coulomb_const=convert_setup_quantity(scrf.coulomb_const, units, T),
+    )
+end
+
 @doc raw"""
     CoulombReactionFieldScaled(; dist_cutoff, solvent_dielectric, use_neighbors,
                                scheduler, weight_special, coulomb_const)
@@ -867,6 +886,12 @@ function Base.:+(c1::CoulombReactionFieldScaled, c2::CoulombReactionFieldScaled)
         c1.coulomb_const + c2.coulomb_const,
     )
 end
+
+parameter_prefix(::CoulombReactionFieldScaled) = "inter_CO_"
+parameter_fields(::Type{<:CoulombReactionFieldScaled}) =
+    ((:dist_cutoff, "dist_cutoff"), (:solvent_dielectric, "solvent_dielectric"),
+     (:weight_special, "weight_14"), (:coulomb_const, "coulomb_const"))
+
 
 @inline function force(inter::CoulombReactionFieldScaled,
                        dr,
@@ -1000,6 +1025,12 @@ function Base.:+(c1::CoulombSoftCoreBeutlerReactionField, c2::CoulombSoftCoreBeu
         c1.coulomb_const + c2.coulomb_const,
     )
 end
+
+parameter_prefix(::CoulombSoftCoreBeutlerReactionField) = "inter_CO_"
+parameter_fields(::Type{<:CoulombSoftCoreBeutlerReactionField}) =
+    ((:dist_cutoff, "dist_cutoff"), (:solvent_dielectric, "solvent_dielectric"), (:α, "α"),
+     (:weight_special, "weight_14"), (:coulomb_const, "coulomb_const"))
+
 
 @inline function force(inter::CoulombSoftCoreBeutlerReactionField,
                        dr,
@@ -1165,7 +1196,7 @@ end
 
 use_neighbors(inter::CoulombSoftCoreGapsysReactionField) = inter.use_neighbors
 
-required_atom_fields(::CoulombSoftCoreGapsysReactionField) = (:charge, :λ, :alch_role,
+required_atom_fields(inter::CoulombSoftCoreGapsysReactionField) = (:charge, :λ, :alch_role,
             mixing_atom_fields(inter.λ_mixing)...)
 
 function Base.zero(coul::CoulombSoftCoreGapsysReactionField{D, S, A, SQ, LM, SCH, W, T}) where {D, S, A, SQ, LM, SCH, W, T}
@@ -1195,6 +1226,12 @@ function Base.:+(c1::CoulombSoftCoreGapsysReactionField, c2::CoulombSoftCoreGaps
         c1.coulomb_const + c2.coulomb_const,
     )
 end
+
+parameter_prefix(::CoulombSoftCoreGapsysReactionField) = "inter_CO_"
+parameter_fields(::Type{<:CoulombSoftCoreGapsysReactionField}) =
+    ((:dist_cutoff, "dist_cutoff"), (:solvent_dielectric, "solvent_dielectric"), (:α, "α"),
+     (:σQ, "σQ"), (:weight_special, "weight_14"), (:coulomb_const, "coulomb_const"))
+
 
 @inline function force(inter::CoulombSoftCoreGapsysReactionField,
                        dr,
@@ -1384,26 +1421,11 @@ function Base.:+(c1::CoulombEwald, c2::CoulombEwald)
     )
 end
 
-function inject_interaction(inter::CoulombEwald, params_dic)
-    key_prefix = "inter_CE_"
-    return CoulombEwald(
-        dict_get(params_dic, key_prefix * "dist_cutoff", inter.dist_cutoff),
-        inter.error_tol,
-        inter.use_neighbors,
-        dict_get(params_dic, key_prefix * "weight_14", inter.weight_special),
-        dict_get(params_dic, key_prefix * "coulomb_const", inter.coulomb_const),
-        inter.α,
-        inter.approximate_erfc,
-    )
-end
+parameter_prefix(::CoulombEwald) = "inter_CO_"
+parameter_fields(::Type{<:CoulombEwald}) =
+    ((:dist_cutoff, "dist_cutoff"), (:weight_special, "weight_14"),
+     (:coulomb_const, "coulomb_const"))
 
-function extract_parameters!(params_dic, inter::CoulombEwald, ff)
-    key_prefix = "inter_CE_"
-    params_dic[key_prefix * "dist_cutoff"] = inter.dist_cutoff
-    params_dic[key_prefix * "weight_14"] = inter.weight_special
-    params_dic[key_prefix * "coulomb_const"] = inter.coulomb_const
-    return params_dic
-end
 
 function calc_erfc(αr::T, exp_mαr2, approximate_erfc) where T
     if approximate_erfc
@@ -1520,6 +1542,12 @@ function Base.:+(c1::CoulombEwaldScaled, c2::CoulombEwaldScaled)
         c1.approximate_erfc,
     )
 end
+
+parameter_prefix(::CoulombEwaldScaled) = "inter_CO_"
+parameter_fields(::Type{<:CoulombEwaldScaled}) =
+    ((:dist_cutoff, "dist_cutoff"), (:weight_special, "weight_14"),
+     (:coulomb_const, "coulomb_const"))
+
 
 @inline function force(inter::CoulombEwaldScaled{T},
                        dr,
@@ -1701,6 +1729,12 @@ function Base.:+(c1::CoulombSoftCoreBeutlerEwald, c2::CoulombSoftCoreBeutlerEwal
     )
 end
 
+parameter_prefix(::CoulombSoftCoreBeutlerEwald) = "inter_CO_"
+parameter_fields(::Type{<:CoulombSoftCoreBeutlerEwald}) =
+    ((:dist_cutoff, "dist_cutoff"), (:α, "α"), (:weight_special, "weight_14"),
+     (:coulomb_const, "coulomb_const"))
+
+
 @inline function force(inter::CoulombSoftCoreBeutlerEwald,
                        dr,
                        atom_i,
@@ -1835,7 +1869,7 @@ end
 
 use_neighbors(inter::CoulombSoftCoreGapsysEwald) = inter.use_neighbors
 
-required_atom_fields(::CoulombSoftCoreGapsysEwald) = (:charge, :λ, :alch_role,
+required_atom_fields(inter::CoulombSoftCoreGapsysEwald) = (:charge, :λ, :alch_role,
             mixing_atom_fields(inter.λ_mixing)...)
 
 function Base.zero(coul::CoulombSoftCoreGapsysEwald{ET, D, A, SQ, LM, SCH, W, C, EA}) where {ET, D, A, SQ, LM, SCH, W, C, EA}
@@ -1869,6 +1903,12 @@ function Base.:+(c1::CoulombSoftCoreGapsysEwald, c2::CoulombSoftCoreGapsysEwald)
         c1.approximate_erfc,
     )
 end
+
+parameter_prefix(::CoulombSoftCoreGapsysEwald) = "inter_CO_"
+parameter_fields(::Type{<:CoulombSoftCoreGapsysEwald}) =
+    ((:dist_cutoff, "dist_cutoff"), (:α, "α"), (:σQ, "σQ"), (:weight_special, "weight_14"),
+     (:coulomb_const, "coulomb_const"))
+
 
 @inline function force(inter::CoulombSoftCoreGapsysEwald,
                        dr,
@@ -2007,6 +2047,10 @@ function Base.:+(c1::Yukawa, c2::Yukawa)
         c1.kappa + c2.kappa,
     )
 end
+
+parameter_prefix(::Yukawa) = "inter_YU_"
+parameter_fields(::Type{<:Yukawa}) =
+    ((:weight_special, "weight_14"), (:coulomb_const, "coulomb_const"), (:kappa, "kappa"))
 
 @inline function force(inter::Yukawa,
                        dr,

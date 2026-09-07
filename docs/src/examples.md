@@ -23,7 +23,7 @@ ff = MolecularForceField(
 sys = System(
     joinpath(data_dir, "6mrr_equil.pdb"),
     ff;
-    nonbonded_method=:cutoff,
+    nonbonded_method=SetupCoulombReactionField(),
     loggers=(temp=TemperatureLogger(100),),
 )
 
@@ -274,7 +274,6 @@ protein_inds = 1:1170
 
 data_dir = joinpath(dirname(pathof(Molly)), "..", "data")
 ff = MolecularForceField(
-    T,
     joinpath(data_dir, "force_fields", "ff99SBildn.xml"),
     joinpath(data_dir, "force_fields", "tip3p_standard.xml"),
 )
@@ -293,9 +292,10 @@ end
 sys = System(
     joinpath(data_dir, "6mrr_equil.pdb"),
     ff;
-    nonbonded_method=:pme,
+    nonbonded_method=SetupPME(),
     loggers=(gyration=GyrationLogger(50),),
     array_type=AT,
+    float_type=T,
 )
 
 minimizer = SteepestDescentMinimizer()
